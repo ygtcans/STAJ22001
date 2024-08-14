@@ -4,7 +4,6 @@ from src.db_connections import PostgreSQLDB, MinioClient
 import json
 import os
 import datetime
-from src.db_connections import PostgreSQLDB
 from sqlalchemy import text
 
 class BaseDataHandler(ABC):
@@ -96,7 +95,6 @@ class LocalDataHandler(BaseDataHandler):
                 raise IOError(f"Error writing file to {file_path}: {e}")
         else:
             raise ValueError(f"Unsupported file extension: {extension}")
-        
 class PostgresDataHandler(BaseDataHandler):
     """Handles reading and writing data to a PostgreSQL database."""
 
@@ -185,3 +183,104 @@ class PostgresDataHandler(BaseDataHandler):
             return pd.DataFrame(data, columns=columns)
         except Exception as e:
             raise RuntimeError(f"Failed to read data from PostgreSQL table {table_name}: {e}")
+
+class MinIODataHandler(BaseDataHandler):
+    """Handles reading and writing data to MinIO object storage."""
+
+    def _init_(self):
+        self.minio = MinioClient()
+        self.client = self.minio.connect()
+
+    def _upload_file(self, bucket_name: str, file_path: str, object_name: str) -> None:
+        """
+        Uploads a file to MinIO.
+
+        Args:
+            bucket_name (str): The name of the MinIO bucket.
+            file_path (str): The path of the file to upload.
+            object_name (str): The object name in MinIO.
+
+        Returns:
+            None
+        """
+        try:
+            with open(file_path, "rb") as file_data:
+                self.client.put_object(bucket_name, f"{object_name}.{file_path.split('.')[-1]}", file_data, length=os.path.getsize(file_path))
+                print(f"Uploaded {file_path} to MinIO")
+        except Exception as e:
+            raise RuntimeError(f"Error uploading file to MinIO: {e}")
+
+    def _upload_files_in_folder(self, directory_path: str, bucket_name: str, object_name: str) -> None:
+        """
+        Uploads all files in a folder to MinIO.
+
+        Args:
+            directory_path (str): The path of the directory containing files to upload.
+            bucket_name (str): The name of the MinIO bucket.
+            object_name (str): The object name prefix in MinIO.
+
+        Returns:
+            None
+        """
+        if not os.path.isdir(directory_path):
+            raise NotADirectoryError(f"Directory does not exist: {directory_path}")
+
+        for file_name in os.listdir(directory_path):
+            file_path = os.path.join(directory_path, file_name)
+            if os.path.isfile(file_path):
+                self._upload_file(bucket_name, file_path, f"{object_name}/{file_name}")
+            else:
+                print(f"Skipped non-file item: {file_name}")
+
+    def write(self, path: str, bucket_name: str, object_name: str) -> None:
+        """
+        Writes data to MinIO, either a single file or all files in a directory.
+
+        Args:
+            path (str): The path of the file or directory to upload.
+            bucket_name (str): The name of the MinIO bucket.
+            object_name (str): The object name or prefix in MinIO.
+
+        Returns:
+            None
+        """
+        if os.path.isfile(path):
+            self._upload_file(bucket_name, path, object_name)
+        elif os.path.isdir(path):
+            self._upload_files_in_folder(path, bucket_name, object_name)
+        else:
+            raise ValueError("Invalid path provided.")
+
+    def read(self, bucket_name: str, destination_dir: str, object_name: str = None, object_prefix: str = None, multiple: bool = False) -> bool:
+        """
+        Reads data from MinIO, either a single file or all files with a prefix.
+
+        Args:
+            bucket_name (str): The name of the MinIO bucket.
+            destination_dir (str): The directory to save downloaded files.
+            object_name (str): The name of the object to download (if single file).
+            object_prefix (str): The prefix of objects to download (if multiple files).
+            multiple (bool): Whether to download multiple files.
+
+        Returns:
+            bool: True if download is successful, False otherwise.
+        """
+        try:
+            if multiple:
+                objects = self.client.list_objects(bucket_name, prefix=object_prefix, recursive=True)
+                for obj in objects:
+                    if obj.object_name.endswith('/'):
+                        continue  # Skip directories
+                    file_name = obj.object_name.lstrip('/')
+                    local_file_path = os.path.join(destination_dir, file_name)
+                    os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
+                    self.client.fget_object(bucket_name, obj.object_name, local_file_path)
+                    print(f"Downloaded {obj.object_name} to {local_file_path}")
+            else:
+                local_file_path = os.path.join(destination_dir, object_name)
+                self.client.fget_object(bucket_name, object_name, local_file_path)
+                print(f"Downloaded {object_name} to {destination_dir}")
+
+            return True
+        except Exception as e:
+            raise RuntimeError(f"Error downloading from MinIO: {e}")
