@@ -1,9 +1,9 @@
 import pandas as pd
 from abc import ABC, abstractmethod
-from src.db_connections import PostgreSQLDB, MinioClient
 import json
 import os
 import datetime
+from src.db_connections import PostgreSQLDB, MinioClient
 from sqlalchemy import text
 
 class BaseDataHandler(ABC):
