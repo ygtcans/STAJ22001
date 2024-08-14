@@ -2,6 +2,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker as sessionMaker
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.orm.session import Session
+from dotenv import load_dotenv
+from minio import Minio
 import os
 from abc import ABC, abstractmethod
 
@@ -87,3 +89,75 @@ class PostgreSQLDB(BaseDBConnection):
                 return result
         except Exception as e:
             print("Failed: ", e)
+            
+class MinioClient(BaseDBConnection):
+    """
+    Class for MinIO client connection.
+    """
+    def _init_(self):
+        """
+        Initializes MinioClient object and fetches connection details from environment variables.
+        """
+        self.endpoint = os.getenv("MINIO_ENDPOINT")
+        self.access_key = os.getenv("MINIO_ACCESS_KEY")
+        self.secret_key = os.getenv("MINIO_SECRET_KEY")
+        self.client: Minio = None
+        self.secure: bool = False
+
+    def connect(self):
+        """
+        Connects to the MinIO server.
+        
+        Returns:
+            Minio: Minio object representing the connection to the server.
+        """
+        try:
+            self.client = Minio(
+                self.endpoint,
+                access_key=self.access_key,
+                secret_key=self.secret_key,
+                secure=self.secure
+            )
+            print(f"Connected to MinIO at {self.endpoint}")
+            return self.client
+        except Exception as e:
+            print(f"Error connecting to MinIO: {e}")
+
+    def create_bucket(self, bucket_name):
+        """
+        Creates a new bucket on the MinIO server.
+        
+        Args:
+            bucket_name (str): Name of the bucket to create.
+        
+        Returns:
+            None
+        """
+        if not self.client:
+            print("Not connected to MinIO. Please call connect() first.")
+            return
+        try: 
+            if not self.client.bucket_exists(bucket_name):
+                self.client.make_bucket(bucket_name)
+                print(f"Bucket '{bucket_name}' created successfully!")
+            else:
+                print(f"Bucket '{bucket_name}' already exists")
+        except Exception as e:
+            print(f"{e}")
+
+    def list_buckets(self):
+        """
+        Lists all buckets on the MinIO server.
+        
+        Returns:
+            None
+        """
+        if not self.client:
+            print("Not connected to MinIO. Please call connect() first.")
+            return
+        try:
+            buckets = self.client.list_buckets()
+            for bucket in buckets:
+                print(f"{bucket.name} - {bucket.creation_date}")
+        except Exception as e:
+            print("Error: ", e)
